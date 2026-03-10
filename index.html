@@ -1714,7 +1714,14 @@ const PAYSTACK_PUBLIC_KEY = 'pk_test_xxxxxxxxxxxxxxxx'; // Replace with live key
 const COMMISSION_AMOUNT = 500000; // ₦5,000 in kobo
 const PLATFORM_FEE_PCT = 0.03;
 
-const db = window.supabase.createClient(SB_URL, SB_KEY);
+const db = window.supabase.createClient(SB_URL, SB_KEY, {
+  auth: {
+    persistSession:     true,
+    autoRefreshToken:   true,
+    detectSessionInUrl: true,
+    storage:            window.localStorage
+  }
+});
 
 // ====================================================
 //  STATE
@@ -1807,7 +1814,13 @@ async function handleAuth(e) {
   try {
     if (isLogin) {
       const { data, error } = await db.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      if (error) {
+        if (error.message?.toLowerCase().includes('email not confirmed')) {
+          toast('Email Not Confirmed', 'Go to Supabase → Auth → Providers → Email → disable "Confirm email"', 'error', 8000);
+          return;
+        }
+        throw error;
+      }
       await onAuthSuccess(data.user);
     } else {
       const name = document.getElementById('auth-name').value.trim();
@@ -1866,8 +1879,25 @@ async function onAuthSuccess(user) {
 }
 
 async function checkSession() {
+  // Restore any existing session from localStorage
   const { data } = await db.auth.getSession();
-  if (data.session?.user) { currentUser = data.session.user; await onAuthSuccess(currentUser); }
+  if (data.session?.user) {
+    currentUser = data.session.user;
+    await onAuthSuccess(currentUser);
+  }
+  // Listen for future auth changes (login / logout / token refresh)
+  db.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session?.user && !currentUser) {
+      currentUser = session.user;
+      await onAuthSuccess(currentUser);
+    }
+    if (event === 'SIGNED_OUT') {
+      currentUser = null;
+    }
+    if (event === 'TOKEN_REFRESHED' && session?.user) {
+      currentUser = session.user;
+    }
+  });
 }
 
 function updateNavForUser() {
